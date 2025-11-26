@@ -1,0 +1,2008 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Game Lab - 五款小游戏大厅</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+            background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+        }
+
+        #gameCanvas {
+            display: block;
+            cursor: pointer;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* 星星背景 */
+        .stars {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle 2s infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <!-- 星星背景 -->
+    <div class="stars" id="stars"></div>
+
+    <!-- 游戏画布 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // ==================== 全局变量和初始化 ====================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 设置画布大小
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // 响应窗口大小变化
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // 场景状态管理
+        let currentScene = 'hub'; // 'hub', 'game1', 'game2', 'game3', 'game4', 'game5'
+
+        // 鼠标状态
+        let mouseX = 0;
+        let mouseY = 0;
+        let mouseDown = false;
+        let dragTarget = null;
+
+        // ==================== 创建星星背景 ====================
+        function createStars() {
+            const starsContainer = document.getElementById('stars');
+            for (let i = 0; i < 50; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.width = Math.random() * 3 + 'px';
+                star.style.height = star.style.width;
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 100 + '%';
+                star.style.animationDelay = Math.random() * 2 + 's';
+                starsContainer.appendChild(star);
+            }
+        }
+        createStars();
+
+        // ==================== 工具函数 ====================
+
+        // 检测点是否在矩形内
+        function isPointInRect(x, y, rect) {
+            return x >= rect.x && x <= rect.x + rect.width &&
+                   y >= rect.y && y <= rect.y + rect.height;
+        }
+
+        // 检测点是否在圆形内
+        function isPointInCircle(x, y, cx, cy, radius) {
+            const dx = x - cx;
+            const dy = y - cy;
+            return dx * dx + dy * dy <= radius * radius;
+        }
+
+        // 绘制圆角矩形
+        function roundRect(x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+
+        // 绘制发光效果
+        function drawGlow(x, y, radius, color, intensity = 0.5) {
+            const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+            gradient.addColorStop(0, color);
+            gradient.addColorStop(1, 'transparent');
+            ctx.globalAlpha = intensity;
+            ctx.fillStyle = gradient;
+            ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+            ctx.globalAlpha = 1;
+        }
+
+        // ==================== 主菜单场景 (Hub) ====================
+
+        const hub = {
+            // 入口1：闪电按钮 - 充能解锁
+            lightning: {
+                x: canvas.width * 0.2,
+                y: canvas.height * 0.3,
+                radius: 50,
+                charge: 0,
+                maxCharge: 100,
+                unlocked: false,
+                animation: 0
+            },
+
+            // 入口2：水果+小刀 - 拖拽解锁
+            fruit: {
+                x: canvas.width * 0.5,
+                y: canvas.height * 0.3,
+                radius: 60,
+                unlocked: false,
+                sliced: false,
+                sliceAnimation: 0
+            },
+            knife: {
+                x: canvas.width * 0.6,
+                y: canvas.height * 0.3,
+                width: 40,
+                height: 80,
+                isDragging: false,
+                originalX: canvas.width * 0.6,
+                originalY: canvas.height * 0.3
+            },
+
+            // 入口3：滑动门 - 滑块解锁
+            door: {
+                x: canvas.width * 0.8,
+                y: canvas.height * 0.3,
+                width: 120,
+                height: 160,
+                sliderProgress: 0,
+                unlocked: false,
+                openAnimation: 0
+            },
+            slider: {
+                y: canvas.height * 0.3 - 100,
+                position: 0, // 0-1
+                isDragging: false
+            },
+
+            // 入口4：记忆书 - 输入文字解锁
+            book: {
+                x: canvas.width * 0.35,
+                y: canvas.height * 0.65,
+                width: 100,
+                height: 70,
+                unlocked: false,
+                float: 0,
+                pageFlip: 0
+            },
+            input: {
+                text: '',
+                active: false,
+                targetWord: 'MEMORY',
+                shake: 0
+            },
+
+            // 入口5：星球 - 旋转解锁
+            planet: {
+                x: canvas.width * 0.15,
+                y: canvas.height * 0.7,
+                radius: 40,
+                angle: 0,
+                rotationProgress: 0,
+                unlocked: false,
+                isDragging: false,
+                centerX: canvas.width * 0.15,
+                centerY: canvas.height * 0.7,
+                orbitRadius: 80
+            },
+
+            statusText: '欢迎来到 Mini Game Lab！探索五个不同的入口...',
+            helpVisible: false
+        };
+
+        // 更新主菜单
+        function updateHub() {
+            // 更新入口1：闪电充能
+            if (!hub.lightning.unlocked) {
+                const dist = Math.sqrt(
+                    Math.pow(mouseX - hub.lightning.x, 2) +
+                    Math.pow(mouseY - hub.lightning.y, 2)
+                );
+
+                if (dist < 100) {
+                    hub.lightning.charge = Math.min(hub.lightning.maxCharge, hub.lightning.charge + 0.5);
+                    hub.statusText = `充能中... ${Math.floor(hub.lightning.charge)}%`;
+                } else {
+                    hub.lightning.charge = Math.max(0, hub.lightning.charge - 0.3);
+                }
+
+                if (hub.lightning.charge >= hub.lightning.maxCharge) {
+                    hub.lightning.unlocked = true;
+                    hub.statusText = '闪电反应测试 已解锁！';
+                }
+            }
+            hub.lightning.animation += 0.05;
+
+            // 更新入口4：书本浮动
+            hub.book.float += 0.05;
+
+            // 更新入口4：抖动效果
+            if (hub.input.shake > 0) {
+                hub.input.shake -= 1;
+            }
+
+            // 更新入口2：切片动画
+            if (hub.fruit.sliced && hub.fruit.sliceAnimation < 1) {
+                hub.fruit.sliceAnimation += 0.02;
+                if (hub.fruit.sliceAnimation >= 1) {
+                    hub.fruit.unlocked = true;
+                }
+            }
+
+            // 更新入口3：开门动画
+            if (hub.door.sliderProgress >= 1 && !hub.door.unlocked && hub.door.openAnimation < 1) {
+                hub.door.openAnimation += 0.02;
+                if (hub.door.openAnimation >= 1) {
+                    hub.door.unlocked = true;
+                }
+            }
+        }
+
+        // 绘制主菜单
+        function drawHub() {
+            // 清空画布
+            ctx.fillStyle = 'rgba(30, 27, 75, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制标题
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🎮 Mini Game Lab', canvas.width / 2, 80);
+
+            // 绘制帮助按钮
+            ctx.font = '18px Arial';
+            ctx.fillStyle = '#fbbf24';
+            ctx.textAlign = 'right';
+            ctx.fillText('❓ Help', canvas.width - 30, 40);
+
+            // 绘制入口1：闪电按钮
+            drawLightningEntry();
+
+            // 绘制入口2：水果+小刀
+            drawFruitEntry();
+
+            // 绘制入口3：滑动门
+            drawDoorEntry();
+
+            // 绘制入口4：记忆书
+            drawBookEntry();
+
+            // 绘制入口5：星球
+            drawPlanetEntry();
+
+            // 绘制底部状态栏
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(hub.statusText, canvas.width / 2, canvas.height - 30);
+        }
+
+        // 绘制入口1：闪电按钮
+        function drawLightningEntry() {
+            const l = hub.lightning;
+
+            // 发光效果
+            if (!l.unlocked) {
+                drawGlow(l.x, l.y, 80, '#fbbf24', 0.3 + Math.sin(l.animation) * 0.2);
+            }
+
+            // 主圆球
+            ctx.fillStyle = l.unlocked ? '#10b981' : '#fbbf24';
+            ctx.beginPath();
+            ctx.arc(l.x, l.y, l.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 闪电图标
+            ctx.fillStyle = '#1e1b4b';
+            ctx.font = 'bold 40px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('⚡', l.x, l.y);
+
+            // 充能进度条
+            if (!l.unlocked) {
+                const barWidth = 120;
+                const barHeight = 15;
+                const barX = l.x - barWidth / 2;
+                const barY = l.y + l.radius + 20;
+
+                // 背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                roundRect(barX, barY, barWidth, barHeight, 7);
+                ctx.fill();
+
+                // 进度
+                ctx.fillStyle = '#fbbf24';
+                const progress = (barWidth - 4) * (l.charge / l.maxCharge);
+                roundRect(barX + 2, barY + 2, progress, barHeight - 4, 5);
+                ctx.fill();
+
+                // 文字
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Arial';
+                ctx.fillText('悬停充能', l.x, barY + barHeight + 20);
+            } else {
+                // 解锁按钮
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+                roundRect(l.x - 60, l.y + l.radius + 20, 120, 35, 17);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.fillText('开始游戏', l.x, l.y + l.radius + 42);
+            }
+
+            // 标签
+            ctx.fillStyle = '#fbbf24';
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText('闪电反应', l.x, l.y - l.radius - 15);
+        }
+
+        // 绘制入口2：水果+小刀
+        function drawFruitEntry() {
+            const f = hub.fruit;
+            const k = hub.knife;
+
+            // 水果
+            if (!f.sliced) {
+                // 完整水果
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(f.x, f.y, f.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 西瓜纹理
+                ctx.strokeStyle = '#7f1d1d';
+                ctx.lineWidth = 3;
+                for (let i = 0; i < 5; i++) {
+                    ctx.beginPath();
+                    ctx.arc(f.x, f.y, f.radius - i * 10, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+
+                // 高亮提示
+                if (k.isDragging) {
+                    const dist = Math.sqrt(Math.pow(k.x - f.x, 2) + Math.pow(k.y - f.y, 2));
+                    if (dist < 80) {
+                        ctx.strokeStyle = '#fbbf24';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.arc(f.x, f.y, f.radius + 10, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                }
+            } else {
+                // 切开的水果
+                const offset = f.sliceAnimation * 40;
+
+                // 上半部分
+                ctx.save();
+                ctx.translate(f.x, f.y - offset);
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(0, 0, f.radius * 0.8, 0, Math.PI);
+                ctx.fill();
+                ctx.restore();
+
+                // 下半部分
+                ctx.save();
+                ctx.translate(f.x, f.y + offset);
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(0, 0, f.radius * 0.8, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // 小刀
+            ctx.save();
+            ctx.translate(k.x, k.y);
+            if (k.isDragging) {
+                ctx.rotate(Math.PI / 4);
+            }
+
+            // 刀柄
+            ctx.fillStyle = '#92400e';
+            ctx.fillRect(-10, 20, 20, 30);
+
+            // 刀刃
+            ctx.fillStyle = '#d1d5db';
+            ctx.beginPath();
+            ctx.moveTo(0, -30);
+            ctx.lineTo(-15, 20);
+            ctx.lineTo(15, 20);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+
+            // 解锁按钮
+            if (f.unlocked) {
+                const btnX = f.x - 60;
+                const btnY = f.y + f.radius + 20;
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+                roundRect(btnX, btnY, 120, 35, 17);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('开始游戏', f.x, btnY + 17);
+            }
+
+            // 标签
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('切水果', f.x, f.y - f.radius - 15);
+        }
+
+        // 绘制入口3：滑动门
+        function drawDoorEntry() {
+            const d = hub.door;
+            const s = hub.slider;
+
+            // 门框
+            ctx.strokeStyle = '#6366f1';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(d.x - d.width / 2, d.y - d.height / 2, d.width, d.height);
+
+            // 门（两扇）
+            if (d.openAnimation === 0) {
+                ctx.fillStyle = '#4338ca';
+                ctx.fillRect(d.x - d.width / 2 + 4, d.y - d.height / 2 + 4, d.width - 8, d.height - 8);
+
+                // 门中间的缝
+                ctx.strokeStyle = '#1e1b4b';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(d.x, d.y - d.height / 2);
+                ctx.lineTo(d.x, d.y + d.height / 2);
+                ctx.stroke();
+            } else {
+                // 开门动画
+                const offset = d.openAnimation * (d.width / 2);
+
+                // 左扇门
+                ctx.fillStyle = '#4338ca';
+                ctx.fillRect(d.x - d.width / 2 + 4 - offset, d.y - d.height / 2 + 4,
+                           d.width / 2 - 4, d.height - 8);
+
+                // 右扇门
+                ctx.fillRect(d.x + offset, d.y - d.height / 2 + 4,
+                           d.width / 2 - 4, d.height - 8);
+
+                // 门内光线
+                drawGlow(d.x, d.y, 100 * d.openAnimation, '#fbbf24', d.openAnimation * 0.5);
+            }
+
+            // 滑轨
+            const sliderY = s.y;
+            const sliderStartX = d.x - d.width / 2;
+            const sliderWidth = d.width;
+
+            ctx.strokeStyle = '#6366f1';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(sliderStartX, sliderY);
+            ctx.lineTo(sliderStartX + sliderWidth, sliderY);
+            ctx.stroke();
+
+            // 滑块
+            const sliderX = sliderStartX + s.position * sliderWidth;
+            ctx.fillStyle = s.isDragging ? '#fbbf24' : '#8b5cf6';
+            ctx.beginPath();
+            ctx.arc(sliderX, sliderY, 12, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 锁链效果（根据进度变淡）
+            if (d.sliderProgress < 1) {
+                ctx.globalAlpha = 1 - d.sliderProgress;
+                ctx.strokeStyle = '#dc2626';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(d.x - 20, d.y - 20);
+                ctx.lineTo(d.x + 20, d.y + 20);
+                ctx.moveTo(d.x + 20, d.y - 20);
+                ctx.lineTo(d.x - 20, d.y + 20);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+            }
+
+            // 解锁按钮
+            if (d.unlocked) {
+                const btnX = d.x - 60;
+                const btnY = d.y + d.height / 2 + 20;
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+                roundRect(btnX, btnY, 120, 35, 17);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('开始游戏', d.x, btnY + 17);
+            }
+
+            // 标签
+            ctx.fillStyle = '#6366f1';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('迷宫挑战', d.x, d.y - d.height / 2 - 25);
+
+            // 提示
+            if (!d.unlocked && s.position < 1) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Arial';
+                ctx.fillText('拖动滑块解锁', d.x, sliderY + 30);
+            }
+        }
+
+        // 绘制入口4：记忆书
+        function drawBookEntry() {
+            const b = hub.book;
+            const inp = hub.input;
+
+            // 浮动效果
+            const floatY = b.y + Math.sin(b.float) * 5;
+
+            // 书本
+            ctx.save();
+            ctx.translate(b.x + inp.shake * (Math.random() - 0.5) * 5, floatY);
+
+            // 发光
+            if (!b.unlocked) {
+                drawGlow(0, 0, 80, '#a855f7', 0.4);
+            }
+
+            // 书本主体
+            ctx.fillStyle = '#7c3aed';
+            roundRect(-b.width / 2, -b.height / 2, b.width, b.height, 5);
+            ctx.fill();
+
+            // 书脊
+            ctx.fillStyle = '#5b21b6';
+            ctx.fillRect(-5, -b.height / 2, 10, b.height);
+
+            // 翻页效果
+            if (b.pageFlip > 0) {
+                ctx.save();
+                ctx.translate(0, 0);
+                ctx.scale(1 - b.pageFlip * 0.5, 1);
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                roundRect(-b.width / 2, -b.height / 2, b.width, b.height, 5);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            ctx.restore();
+
+            // 提示文字
+            if (!b.unlocked) {
+                ctx.fillStyle = '#a855f7';
+                ctx.font = 'bold 18px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('Type: MEMORY', b.x, b.y - b.height - 20);
+            }
+
+            // 输入框
+            if (!b.unlocked) {
+                const inputX = b.x - 80;
+                const inputY = b.y + b.height / 2 + 30;
+
+                // 输入框背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                roundRect(inputX, inputY, 160, 35, 5);
+                ctx.fill();
+
+                // 输入文字
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(inp.text + (inp.active ? '|' : ''), inputX + 10, inputY + 22);
+
+                // Unlock按钮
+                ctx.fillStyle = inp.text === inp.targetWord ? '#10b981' : '#6b7280';
+                roundRect(inputX, inputY + 45, 160, 30, 5);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Unlock', b.x, inputY + 60);
+            } else {
+                // 解锁按钮
+                const btnX = b.x - 60;
+                const btnY = b.y + b.height / 2 + 30;
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+                roundRect(btnX, btnY, 120, 35, 17);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('开始游戏', b.x, btnY + 17);
+            }
+
+            // 标签
+            ctx.fillStyle = '#a855f7';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('记忆翻牌', b.x, floatY - b.height / 2 - 55);
+        }
+
+        // 绘制入口5：星球
+        function drawPlanetEntry() {
+            const p = hub.planet;
+
+            // 轨道圆环
+            ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(p.centerX, p.centerY, p.orbitRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 进度圆环
+            if (p.rotationProgress > 0 && p.rotationProgress < 1) {
+                ctx.strokeStyle = '#fbbf24';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(p.centerX, p.centerY, p.orbitRadius, -Math.PI / 2,
+                       -Math.PI / 2 + Math.PI * 2 * p.rotationProgress);
+                ctx.stroke();
+            }
+
+            // 星球位置
+            if (!p.unlocked) {
+                p.x = p.centerX + Math.cos(p.angle) * p.orbitRadius;
+                p.y = p.centerY + Math.sin(p.angle) * p.orbitRadius;
+            }
+
+            // 拖尾效果
+            if (p.isDragging) {
+                for (let i = 0; i < 5; i++) {
+                    const angle = p.angle - i * 0.1;
+                    const tx = p.centerX + Math.cos(angle) * p.orbitRadius;
+                    const ty = p.centerY + Math.sin(angle) * p.orbitRadius;
+                    ctx.globalAlpha = 0.3 - i * 0.06;
+                    ctx.fillStyle = '#60a5fa';
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, p.radius * 0.8, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+
+            // 星球
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 星球纹理
+            ctx.fillStyle = '#1e40af';
+            ctx.beginPath();
+            ctx.arc(p.x - 10, p.y - 10, p.radius * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(p.x + 15, p.y + 5, p.radius * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 发光
+            drawGlow(p.x, p.y, p.radius * 1.5, '#60a5fa', 0.4);
+
+            // 火箭图标
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🚀', p.x, p.y);
+
+            // 解锁按钮
+            if (p.unlocked) {
+                const btnX = p.centerX - 60;
+                const btnY = p.centerY + p.orbitRadius + 30;
+                ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+                roundRect(btnX, btnY, 120, 35, 17);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.fillText('开始游戏', p.centerX, btnY + 17);
+            }
+
+            // 标签和提示
+            ctx.fillStyle = '#3b82f6';
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText('太空躲避', p.centerX, p.centerY - p.orbitRadius - 15);
+
+            if (!p.unlocked && p.rotationProgress < 1) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Arial';
+                ctx.fillText('拖动星球旋转一圈', p.centerX, p.centerY + p.orbitRadius + 25);
+            }
+        }
+
+        // ==================== 小游戏 1: 闪电反应测试 ====================
+
+        const game1 = {
+            buttons: [],
+            activeButton: -1,
+            score: 0,
+            timeLeft: 30,
+            nextSpawnTime: 0,
+            reactionTime: 0,
+            gameOver: false
+        };
+
+        function initGame1() {
+            game1.buttons = [];
+            game1.score = 0;
+            game1.timeLeft = 30;
+            game1.gameOver = false;
+            game1.activeButton = -1;
+            game1.nextSpawnTime = Date.now() + 1000;
+
+            // 创建6个按钮
+            const positions = [
+                { x: 0.2, y: 0.3 },
+                { x: 0.5, y: 0.3 },
+                { x: 0.8, y: 0.3 },
+                { x: 0.2, y: 0.6 },
+                { x: 0.5, y: 0.6 },
+                { x: 0.8, y: 0.6 }
+            ];
+
+            for (let pos of positions) {
+                game1.buttons.push({
+                    x: canvas.width * pos.x,
+                    y: canvas.height * pos.y,
+                    radius: 60,
+                    active: false,
+                    scale: 1
+                });
+            }
+
+            // 启动计时器
+            const timer = setInterval(() => {
+                if (currentScene !== 'game1') {
+                    clearInterval(timer);
+                    return;
+                }
+                game1.timeLeft--;
+                if (game1.timeLeft <= 0) {
+                    game1.gameOver = true;
+                    clearInterval(timer);
+                }
+            }, 1000);
+        }
+
+        function updateGame1() {
+            if (game1.gameOver) return;
+
+            // 生成新的激活按钮
+            if (game1.activeButton === -1 && Date.now() > game1.nextSpawnTime) {
+                game1.activeButton = Math.floor(Math.random() * game1.buttons.length);
+                game1.buttons[game1.activeButton].active = true;
+                game1.reactionTime = Date.now();
+                game1.nextSpawnTime = Date.now() + 2000; // 2秒超时
+            }
+
+            // 检查超时
+            if (game1.activeButton !== -1 && Date.now() - game1.reactionTime > 2000) {
+                game1.buttons[game1.activeButton].active = false;
+                game1.activeButton = -1;
+            }
+
+            // 更新按钮动画
+            for (let btn of game1.buttons) {
+                if (btn.scale > 1) {
+                    btn.scale -= 0.05;
+                }
+            }
+        }
+
+        function drawGame1() {
+            // 背景
+            ctx.fillStyle = '#1e1b4b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 标题
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('⚡ 闪电反应测试', canvas.width / 2, 60);
+
+            // 时间和分数
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`时间: ${game1.timeLeft}s | 得分: ${game1.score}`, canvas.width / 2, 110);
+
+            // 绘制按钮
+            for (let i = 0; i < game1.buttons.length; i++) {
+                const btn = game1.buttons[i];
+
+                // 按钮圆形
+                if (btn.active) {
+                    drawGlow(btn.x, btn.y, btn.radius * 2, '#fbbf24', 0.6);
+                    ctx.fillStyle = '#fbbf24';
+                } else {
+                    ctx.fillStyle = '#4b5563';
+                }
+
+                ctx.beginPath();
+                ctx.arc(btn.x, btn.y, btn.radius * btn.scale, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 编号
+                ctx.fillStyle = btn.active ? '#1e1b4b' : '#9ca3af';
+                ctx.font = 'bold 28px Arial';
+                ctx.fillText(i + 1, btn.x, btn.y + 10);
+            }
+
+            // 游戏结束
+            if (game1.gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 48px Arial';
+                ctx.fillText('游戏结束!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.font = 'bold 32px Arial';
+                ctx.fillText(`最终得分: ${game1.score}`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+
+            // 返回按钮
+            drawBackButton();
+        }
+
+        // ==================== 小游戏 2: 切水果 ====================
+
+        const game2 = {
+            fruits: [],
+            bombs: [],
+            slicePath: [],
+            score: 0,
+            timeLeft: 45,
+            gameOver: false,
+            spawnInterval: null,
+            particles: []
+        };
+
+        function initGame2() {
+            game2.fruits = [];
+            game2.bombs = [];
+            game2.slicePath = [];
+            game2.score = 0;
+            game2.timeLeft = 45;
+            game2.gameOver = false;
+            game2.particles = [];
+
+            // 启动计时器
+            const timer = setInterval(() => {
+                if (currentScene !== 'game2') {
+                    clearInterval(timer);
+                    return;
+                }
+                game2.timeLeft--;
+                if (game2.timeLeft <= 0) {
+                    game2.gameOver = true;
+                    clearInterval(timer);
+                    clearInterval(game2.spawnInterval);
+                }
+            }, 1000);
+
+            // 启动水果生成
+            game2.spawnInterval = setInterval(() => {
+                if (currentScene !== 'game2' || game2.gameOver) {
+                    clearInterval(game2.spawnInterval);
+                    return;
+                }
+                spawnFruit();
+            }, 800);
+        }
+
+        function spawnFruit() {
+            const isBomb = Math.random() < 0.15; // 15%概率是炸弹
+            const obj = {
+                x: Math.random() * (canvas.width - 100) + 50,
+                y: canvas.height + 50,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -(Math.random() * 8 + 12),
+                radius: 30,
+                color: isBomb ? '#374151' : ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'][Math.floor(Math.random() * 5)],
+                isBomb: isBomb,
+                sliced: false
+            };
+
+            if (isBomb) {
+                game2.bombs.push(obj);
+            } else {
+                game2.fruits.push(obj);
+            }
+        }
+
+        function updateGame2() {
+            if (game2.gameOver) return;
+
+            // 更新水果
+            for (let i = game2.fruits.length - 1; i >= 0; i--) {
+                const fruit = game2.fruits[i];
+                fruit.vy += 0.5; // 重力
+                fruit.x += fruit.vx;
+                fruit.y += fruit.vy;
+
+                // 检查切割
+                if (!fruit.sliced && game2.slicePath.length > 5) {
+                    for (let point of game2.slicePath) {
+                        if (Math.sqrt(Math.pow(point.x - fruit.x, 2) + Math.pow(point.y - fruit.y, 2)) < fruit.radius) {
+                            fruit.sliced = true;
+                            game2.score++;
+                            createParticles(fruit.x, fruit.y, fruit.color);
+                            break;
+                        }
+                    }
+                }
+
+                // 移除屏幕外的水果
+                if (fruit.y > canvas.height + 100 || fruit.sliced) {
+                    game2.fruits.splice(i, 1);
+                }
+            }
+
+            // 更新炸弹
+            for (let i = game2.bombs.length - 1; i >= 0; i--) {
+                const bomb = game2.bombs[i];
+                bomb.vy += 0.5;
+                bomb.x += bomb.vx;
+                bomb.y += bomb.vy;
+
+                // 检查切割
+                if (!bomb.sliced && game2.slicePath.length > 5) {
+                    for (let point of game2.slicePath) {
+                        if (Math.sqrt(Math.pow(point.x - bomb.x, 2) + Math.pow(point.y - bomb.y, 2)) < bomb.radius) {
+                            bomb.sliced = true;
+                            game2.score = Math.max(0, game2.score - 3);
+                            createParticles(bomb.x, bomb.y, '#dc2626');
+                            break;
+                        }
+                    }
+                }
+
+                if (bomb.y > canvas.height + 100 || bomb.sliced) {
+                    game2.bombs.splice(i, 1);
+                }
+            }
+
+            // 更新粒子
+            for (let i = game2.particles.length - 1; i >= 0; i--) {
+                const p = game2.particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) {
+                    game2.particles.splice(i, 1);
+                }
+            }
+
+            // 清理切割路径
+            if (game2.slicePath.length > 20) {
+                game2.slicePath.shift();
+            }
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                game2.particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 30,
+                    color: color
+                });
+            }
+        }
+
+        function drawGame2() {
+            // 背景
+            ctx.fillStyle = '#fef3c7';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 标题
+            ctx.fillStyle = '#92400e';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🍉 切水果', canvas.width / 2, 60);
+
+            // 时间和分数
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`时间: ${game2.timeLeft}s | 得分: ${game2.score}`, canvas.width / 2, 110);
+
+            // 绘制水果
+            for (let fruit of game2.fruits) {
+                ctx.fillStyle = fruit.color;
+                ctx.beginPath();
+                ctx.arc(fruit.x, fruit.y, fruit.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 绘制炸弹
+            for (let bomb of game2.bombs) {
+                ctx.fillStyle = bomb.color;
+                ctx.beginPath();
+                ctx.arc(bomb.x, bomb.y, bomb.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 炸弹标志
+                ctx.fillStyle = '#dc2626';
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText('💣', bomb.x, bomb.y + 8);
+            }
+
+            // 绘制切割路径
+            if (game2.slicePath.length > 1) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#fff';
+                ctx.beginPath();
+                ctx.moveTo(game2.slicePath[0].x, game2.slicePath[0].y);
+                for (let i = 1; i < game2.slicePath.length; i++) {
+                    ctx.lineTo(game2.slicePath[i].x, game2.slicePath[i].y);
+                }
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            // 绘制粒子
+            for (let p of game2.particles) {
+                ctx.globalAlpha = p.life / 30;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            // 游戏结束
+            if (game2.gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 48px Arial';
+                ctx.fillText('游戏结束!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.font = 'bold 32px Arial';
+                ctx.fillText(`最终得分: ${game2.score}`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+
+            // 返回按钮
+            drawBackButton();
+        }
+
+        // ==================== 小游戏 3: 迷宫 ====================
+
+        const game3 = {
+            player: { x: 1, y: 1 },
+            cellSize: 40,
+            maze: [],
+            enemies: [],
+            resets: 0,
+            startTime: Date.now(),
+            gameWon: false,
+            keys: {}
+        };
+
+        function initGame3() {
+            game3.player = { x: 1, y: 1 };
+            game3.resets = 0;
+            game3.startTime = Date.now();
+            game3.gameWon = false;
+            game3.keys = {};
+
+            // 创建简单迷宫 (0=路径, 1=墙壁, 2=终点)
+            game3.maze = [
+                [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+                [1,0,0,0,1,0,0,0,0,0,1,0,0,0,1],
+                [1,0,1,0,1,0,1,1,1,0,1,0,1,0,1],
+                [1,0,1,0,0,0,0,0,0,0,0,0,1,0,1],
+                [1,0,1,1,1,1,1,0,1,1,1,1,1,0,1],
+                [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+                [1,1,1,0,1,1,1,1,1,0,1,1,1,0,1],
+                [1,0,0,0,0,0,1,0,0,0,0,0,1,0,1],
+                [1,0,1,1,1,0,1,0,1,1,1,0,1,0,1],
+                [1,0,0,0,0,0,0,0,0,0,0,0,0,2,1],
+                [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+            ];
+
+            // 创建移动敌人
+            game3.enemies = [
+                { x: 5, y: 3, vx: 1, vy: 0 },
+                { x: 8, y: 7, vx: 0, vy: 1 }
+            ];
+        }
+
+        function updateGame3() {
+            if (game3.gameWon) return;
+
+            // 玩家移动
+            const speed = 0.15;
+            let newX = game3.player.x;
+            let newY = game3.player.y;
+
+            if (game3.keys['ArrowUp']) newY -= speed;
+            if (game3.keys['ArrowDown']) newY += speed;
+            if (game3.keys['ArrowLeft']) newX -= speed;
+            if (game3.keys['ArrowRight']) newX += speed;
+
+            // 碰撞检测
+            const gridX = Math.floor(newX);
+            const gridY = Math.floor(newY);
+
+            if (game3.maze[gridY] && game3.maze[gridY][gridX] !== 1) {
+                game3.player.x = newX;
+                game3.player.y = newY;
+
+                // 检查是否到达终点
+                if (game3.maze[gridY][gridX] === 2) {
+                    game3.gameWon = true;
+                }
+            }
+
+            // 更新敌人
+            for (let enemy of game3.enemies) {
+                enemy.x += enemy.vx * 0.02;
+                enemy.y += enemy.vy * 0.02;
+
+                // 边界反弹
+                const ex = Math.floor(enemy.x + enemy.vx);
+                const ey = Math.floor(enemy.y + enemy.vy);
+                if (game3.maze[ey] && game3.maze[ey][ex] === 1) {
+                    enemy.vx *= -1;
+                    enemy.vy *= -1;
+                }
+
+                // 检测玩家碰撞
+                const dist = Math.sqrt(
+                    Math.pow(enemy.x - game3.player.x, 2) +
+                    Math.pow(enemy.y - game3.player.y, 2)
+                );
+                if (dist < 0.8) {
+                    game3.player.x = 1;
+                    game3.player.y = 1;
+                    game3.resets++;
+                }
+            }
+        }
+
+        function drawGame3() {
+            // 背景
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 标题
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 28px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🏃 迷宫挑战', canvas.width / 2, 50);
+
+            // 状态
+            const elapsedTime = Math.floor((Date.now() - game3.startTime) / 1000);
+            ctx.font = '18px Arial';
+            ctx.fillText(`时间: ${elapsedTime}s | 重置次数: ${game3.resets}`, canvas.width / 2, 85);
+
+            // 计算迷宫偏移使其居中
+            const mazeWidth = game3.maze[0].length * game3.cellSize;
+            const mazeHeight = game3.maze.length * game3.cellSize;
+            const offsetX = (canvas.width - mazeWidth) / 2;
+            const offsetY = (canvas.height - mazeHeight) / 2 + 20;
+
+            // 绘制迷宫
+            for (let y = 0; y < game3.maze.length; y++) {
+                for (let x = 0; x < game3.maze[y].length; x++) {
+                    const px = offsetX + x * game3.cellSize;
+                    const py = offsetY + y * game3.cellSize;
+
+                    if (game3.maze[y][x] === 1) {
+                        // 墙壁
+                        ctx.fillStyle = '#475569';
+                        ctx.fillRect(px, py, game3.cellSize, game3.cellSize);
+                    } else if (game3.maze[y][x] === 2) {
+                        // 终点
+                        ctx.fillStyle = '#10b981';
+                        ctx.fillRect(px, py, game3.cellSize, game3.cellSize);
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 24px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('🏁', px + game3.cellSize / 2, py + game3.cellSize / 2);
+                    } else {
+                        // 路径
+                        ctx.fillStyle = '#1e293b';
+                        ctx.fillRect(px, py, game3.cellSize, game3.cellSize);
+                    }
+
+                    // 网格线
+                    ctx.strokeStyle = '#334155';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(px, py, game3.cellSize, game3.cellSize);
+                }
+            }
+
+            // 绘制敌人
+            for (let enemy of game3.enemies) {
+                const ex = offsetX + enemy.x * game3.cellSize + game3.cellSize / 2;
+                const ey = offsetY + enemy.y * game3.cellSize + game3.cellSize / 2;
+
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(ex, ey, game3.cellSize * 0.35, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 绘制玩家
+            const playerX = offsetX + game3.player.x * game3.cellSize + game3.cellSize / 2;
+            const playerY = offsetY + game3.player.y * game3.cellSize + game3.cellSize / 2;
+
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(playerX, playerY, game3.cellSize * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 胜利画面
+            if (game3.gameWon) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#10b981';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('恭喜通关!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 24px Arial';
+                const time = Math.floor((Date.now() - game3.startTime) / 1000);
+                ctx.fillText(`用时: ${time}秒 | 重置: ${game3.resets}次`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+
+            // 返回按钮
+            drawBackButton();
+        }
+
+        // ==================== 小游戏 4: 记忆翻牌 ====================
+
+        const game4 = {
+            cards: [],
+            flipped: [],
+            matched: 0,
+            moves: 0,
+            gameWon: false
+        };
+
+        function initGame4() {
+            game4.cards = [];
+            game4.flipped = [];
+            game4.matched = 0;
+            game4.moves = 0;
+            game4.gameWon = false;
+
+            // 创建12张卡片（6对）
+            const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'];
+            const pairs = [...colors, ...colors];
+
+            // 洗牌
+            for (let i = pairs.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+            }
+
+            // 创建卡片对象
+            const startX = canvas.width / 2 - 220;
+            const startY = canvas.height / 2 - 150;
+            for (let i = 0; i < 12; i++) {
+                const row = Math.floor(i / 4);
+                const col = i % 4;
+                game4.cards.push({
+                    x: startX + col * 110,
+                    y: startY + row * 110,
+                    width: 90,
+                    height: 90,
+                    color: pairs[i],
+                    state: 'hidden', // 'hidden', 'shown', 'matched'
+                    scale: 1
+                });
+            }
+        }
+
+        function updateGame4() {
+            // 更新卡片动画
+            for (let card of game4.cards) {
+                if (card.scale > 1) {
+                    card.scale -= 0.05;
+                }
+            }
+
+            // 检查翻牌逻辑
+            if (game4.flipped.length === 2) {
+                setTimeout(() => {
+                    const [idx1, idx2] = game4.flipped;
+                    if (game4.cards[idx1].color === game4.cards[idx2].color) {
+                        // 匹配成功
+                        game4.cards[idx1].state = 'matched';
+                        game4.cards[idx2].state = 'matched';
+                        game4.cards[idx1].scale = 1.2;
+                        game4.cards[idx2].scale = 1.2;
+                        game4.matched++;
+
+                        if (game4.matched === 6) {
+                            game4.gameWon = true;
+                        }
+                    } else {
+                        // 不匹配，翻回去
+                        game4.cards[idx1].state = 'hidden';
+                        game4.cards[idx2].state = 'hidden';
+                    }
+                    game4.flipped = [];
+                }, 800);
+            }
+        }
+
+        function drawGame4() {
+            // 背景
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 标题
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🧠 记忆翻牌', canvas.width / 2, 60);
+
+            // 状态
+            ctx.font = 'bold 20px Arial';
+            ctx.fillText(`翻牌次数: ${game4.moves} | 已配对: ${game4.matched}/6`, canvas.width / 2, 110);
+
+            // 绘制卡片
+            for (let i = 0; i < game4.cards.length; i++) {
+                const card = game4.cards[i];
+                const x = card.x - (card.width * card.scale - card.width) / 2;
+                const y = card.y - (card.height * card.scale - card.height) / 2;
+                const w = card.width * card.scale;
+                const h = card.height * card.scale;
+
+                if (card.state === 'hidden') {
+                    // 背面
+                    ctx.fillStyle = '#475569';
+                    roundRect(x, y, w, h, 10);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = 'bold 36px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('?', card.x + card.width / 2, card.y + card.height / 2);
+                } else {
+                    // 正面
+                    ctx.fillStyle = card.color;
+                    roundRect(x, y, w, h, 10);
+                    ctx.fill();
+
+                    if (card.state === 'matched') {
+                        // 打勾标记
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 40px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('✓', card.x + card.width / 2, card.y + card.height / 2);
+                    }
+                }
+
+                // 边框
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                roundRect(x, y, w, h, 10);
+                ctx.stroke();
+            }
+
+            // 胜利画面
+            if (game4.gameWon) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#10b981';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('完美记忆!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 28px Arial';
+                ctx.fillText(`总共翻牌: ${game4.moves}次`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+
+            // 返回按钮
+            drawBackButton();
+        }
+
+        // ==================== 小游戏 5: 太空躲避 ====================
+
+        const game5 = {
+            ship: {
+                x: canvas.width / 2,
+                y: canvas.height - 100,
+                width: 50,
+                height: 50,
+                vx: 0,
+                tilt: 0
+            },
+            meteors: [],
+            score: 0,
+            gameOver: false,
+            spawnInterval: null,
+            keys: {}
+        };
+
+        function initGame5() {
+            game5.ship.x = canvas.width / 2;
+            game5.ship.y = canvas.height - 100;
+            game5.ship.vx = 0;
+            game5.ship.tilt = 0;
+            game5.meteors = [];
+            game5.score = 0;
+            game5.gameOver = false;
+            game5.keys = {};
+
+            // 启动陨石生成
+            game5.spawnInterval = setInterval(() => {
+                if (currentScene !== 'game5' || game5.gameOver) {
+                    clearInterval(game5.spawnInterval);
+                    return;
+                }
+
+                game5.meteors.push({
+                    x: Math.random() * (canvas.width - 60) + 30,
+                    y: -50,
+                    radius: Math.random() * 20 + 20,
+                    speed: Math.random() * 3 + 3 + game5.score * 0.05
+                });
+            }, 800);
+        }
+
+        function updateGame5() {
+            if (game5.gameOver) return;
+
+            // 飞船控制
+            if (game5.keys['ArrowLeft']) {
+                game5.ship.vx = -8;
+                game5.ship.tilt = -0.2;
+            } else if (game5.keys['ArrowRight']) {
+                game5.ship.vx = 8;
+                game5.ship.tilt = 0.2;
+            } else {
+                game5.ship.vx = 0;
+                game5.ship.tilt = 0;
+            }
+
+            game5.ship.x += game5.ship.vx;
+            game5.ship.x = Math.max(game5.ship.width / 2,
+                           Math.min(canvas.width - game5.ship.width / 2, game5.ship.x));
+
+            // 更新陨石
+            for (let i = game5.meteors.length - 1; i >= 0; i--) {
+                const meteor = game5.meteors[i];
+                meteor.y += meteor.speed;
+
+                // 碰撞检测
+                const dist = Math.sqrt(
+                    Math.pow(meteor.x - game5.ship.x, 2) +
+                    Math.pow(meteor.y - game5.ship.y, 2)
+                );
+
+                if (dist < meteor.radius + game5.ship.width / 2) {
+                    game5.gameOver = true;
+                    clearInterval(game5.spawnInterval);
+                }
+
+                // 移除屏幕外的陨石并加分
+                if (meteor.y > canvas.height + 50) {
+                    game5.meteors.splice(i, 1);
+                    game5.score++;
+                }
+            }
+        }
+
+        function drawGame5() {
+            // 背景（太空）
+            ctx.fillStyle = '#0c0a1f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 星星点点
+            for (let i = 0; i < 30; i++) {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                const x = (i * 73) % canvas.width;
+                const y = (i * 127 + Date.now() * 0.05) % canvas.height;
+                ctx.fillRect(x, y, 2, 2);
+            }
+
+            // 标题
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 32px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('🚀 太空躲避', canvas.width / 2, 60);
+
+            // 分数
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`得分: ${game5.score}`, canvas.width / 2, 110);
+
+            // 绘制陨石
+            for (let meteor of game5.meteors) {
+                // 拖尾
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+                ctx.lineWidth = meteor.radius;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(meteor.x, meteor.y - meteor.speed * 3);
+                ctx.lineTo(meteor.x, meteor.y);
+                ctx.stroke();
+
+                // 陨石
+                ctx.fillStyle = '#78350f';
+                ctx.beginPath();
+                ctx.arc(meteor.x, meteor.y, meteor.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 陨石纹理
+                ctx.fillStyle = '#451a03';
+                ctx.beginPath();
+                ctx.arc(meteor.x - meteor.radius * 0.3, meteor.y - meteor.radius * 0.3,
+                       meteor.radius * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 绘制飞船
+            ctx.save();
+            ctx.translate(game5.ship.x, game5.ship.y);
+            ctx.rotate(game5.ship.tilt);
+
+            // 飞船主体
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.moveTo(0, -25);
+            ctx.lineTo(-20, 25);
+            ctx.lineTo(20, 25);
+            ctx.closePath();
+            ctx.fill();
+
+            // 驾驶舱
+            ctx.fillStyle = '#60a5fa';
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 引擎火焰
+            if (game5.ship.vx !== 0) {
+                ctx.fillStyle = '#f59e0b';
+                ctx.globalAlpha = 0.7;
+                ctx.beginPath();
+                ctx.moveTo(-15, 25);
+                ctx.lineTo(-10, 35 + Math.random() * 5);
+                ctx.lineTo(-5, 25);
+                ctx.closePath();
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(15, 25);
+                ctx.lineTo(10, 35 + Math.random() * 5);
+                ctx.lineTo(5, 25);
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+
+            ctx.restore();
+
+            // 游戏结束
+            if (game5.gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#ef4444';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('游戏结束!', canvas.width / 2, canvas.height / 2 - 50);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 32px Arial';
+                ctx.fillText(`最终得分: ${game5.score}`, canvas.width / 2, canvas.height / 2 + 20);
+            }
+
+            // 返回按钮
+            drawBackButton();
+        }
+
+        // ==================== 返回按钮 ====================
+
+        function drawBackButton() {
+            const btnX = 30;
+            const btnY = canvas.height - 60;
+            const btnWidth = 150;
+            const btnHeight = 40;
+
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.8)';
+            roundRect(btnX, btnY, btnWidth, btnHeight, 20);
+            ctx.fill();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('← 返回大厅', btnX + btnWidth / 2, btnY + btnHeight / 2);
+        }
+
+        function isBackButtonClicked(x, y) {
+            const btnX = 30;
+            const btnY = canvas.height - 60;
+            const btnWidth = 150;
+            const btnHeight = 40;
+            return x >= btnX && x <= btnX + btnWidth && y >= btnY && y <= btnY + btnHeight;
+        }
+
+        // ==================== 主渲染循环 ====================
+
+        function gameLoop() {
+            // 根据当前场景更新和绘制
+            switch (currentScene) {
+                case 'hub':
+                    updateHub();
+                    drawHub();
+                    break;
+                case 'game1':
+                    updateGame1();
+                    drawGame1();
+                    break;
+                case 'game2':
+                    updateGame2();
+                    drawGame2();
+                    break;
+                case 'game3':
+                    updateGame3();
+                    drawGame3();
+                    break;
+                case 'game4':
+                    updateGame4();
+                    drawGame4();
+                    break;
+                case 'game5':
+                    updateGame5();
+                    drawGame5();
+                    break;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ==================== 事件监听 ====================
+
+        // 鼠标移动
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+
+            // 主菜单：小刀拖拽
+            if (currentScene === 'hub' && hub.knife.isDragging) {
+                hub.knife.x = mouseX;
+                hub.knife.y = mouseY;
+            }
+
+            // 主菜单：滑块拖拽
+            if (currentScene === 'hub' && hub.slider.isDragging) {
+                const sliderStartX = hub.door.x - hub.door.width / 2;
+                const sliderWidth = hub.door.width;
+                hub.slider.position = Math.max(0, Math.min(1,
+                    (mouseX - sliderStartX) / sliderWidth));
+                hub.door.sliderProgress = hub.slider.position;
+            }
+
+            // 主菜单：星球拖拽
+            if (currentScene === 'hub' && hub.planet.isDragging) {
+                const dx = mouseX - hub.planet.centerX;
+                const dy = mouseY - hub.planet.centerY;
+                const newAngle = Math.atan2(dy, dx);
+
+                // 计算角度差
+                let angleDiff = newAngle - hub.planet.angle;
+                if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+                hub.planet.rotationProgress += Math.abs(angleDiff) / (Math.PI * 2);
+                hub.planet.angle = newAngle;
+
+                if (hub.planet.rotationProgress >= 1) {
+                    hub.planet.unlocked = true;
+                    hub.planet.isDragging = false;
+                }
+            }
+
+            // 游戏2：记录切割路径
+            if (currentScene === 'game2' && mouseDown) {
+                game2.slicePath.push({ x: mouseX, y: mouseY });
+            }
+        });
+
+        // 鼠标按下
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            mouseDown = true;
+
+            if (currentScene === 'hub') {
+                // 检查小刀
+                if (isPointInRect(mouseX, mouseY, {
+                    x: hub.knife.x - 20,
+                    y: hub.knife.y - 40,
+                    width: 40,
+                    height: 80
+                })) {
+                    hub.knife.isDragging = true;
+                }
+
+                // 检查滑块
+                const sliderX = hub.door.x - hub.door.width / 2 + hub.slider.position * hub.door.width;
+                if (isPointInCircle(mouseX, mouseY, sliderX, hub.slider.y, 15)) {
+                    hub.slider.isDragging = true;
+                }
+
+                // 检查星球
+                if (isPointInCircle(mouseX, mouseY, hub.planet.x, hub.planet.y, hub.planet.radius)) {
+                    hub.planet.isDragging = true;
+                }
+            }
+
+            // 游戏2：开始切割
+            if (currentScene === 'game2') {
+                game2.slicePath = [{ x: mouseX, y: mouseY }];
+            }
+        });
+
+        // 鼠标抬起
+        canvas.addEventListener('mouseup', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            mouseDown = false;
+
+            if (currentScene === 'hub') {
+                // 小刀释放检测
+                if (hub.knife.isDragging) {
+                    const dist = Math.sqrt(
+                        Math.pow(hub.knife.x - hub.fruit.x, 2) +
+                        Math.pow(hub.knife.y - hub.fruit.y, 2)
+                    );
+
+                    if (dist < 80 && !hub.fruit.sliced) {
+                        hub.fruit.sliced = true;
+                        hub.statusText = '切水果游戏 已解锁！';
+                    }
+
+                    // 小刀回位
+                    hub.knife.x = hub.knife.originalX;
+                    hub.knife.y = hub.knife.originalY;
+                    hub.knife.isDragging = false;
+                }
+
+                hub.slider.isDragging = false;
+                hub.planet.isDragging = false;
+            }
+
+            // 游戏2：结束切割
+            if (currentScene === 'game2') {
+                setTimeout(() => {
+                    game2.slicePath = [];
+                }, 200);
+            }
+        });
+
+        // 鼠标点击
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // 检查返回按钮
+            if (currentScene !== 'hub' && isBackButtonClicked(clickX, clickY)) {
+                currentScene = 'hub';
+                return;
+            }
+
+            if (currentScene === 'hub') {
+                // 检查闪电按钮
+                if (hub.lightning.unlocked) {
+                    const btnX = hub.lightning.x - 60;
+                    const btnY = hub.lightning.y + hub.lightning.radius + 20;
+                    if (isPointInRect(clickX, clickY, { x: btnX, y: btnY, width: 120, height: 35 })) {
+                        currentScene = 'game1';
+                        initGame1();
+                        return;
+                    }
+                }
+
+                // 检查水果按钮
+                if (hub.fruit.unlocked) {
+                    const btnX = hub.fruit.x - 60;
+                    const btnY = hub.fruit.y + hub.fruit.radius + 20;
+                    if (isPointInRect(clickX, clickY, { x: btnX, y: btnY, width: 120, height: 35 })) {
+                        currentScene = 'game2';
+                        initGame2();
+                        return;
+                    }
+                }
+
+                // 检查门按钮
+                if (hub.door.unlocked) {
+                    const btnX = hub.door.x - 60;
+                    const btnY = hub.door.y + hub.door.height / 2 + 20;
+                    if (isPointInRect(clickX, clickY, { x: btnX, y: btnY, width: 120, height: 35 })) {
+                        currentScene = 'game3';
+                        initGame3();
+                        return;
+                    }
+                }
+
+                // 检查书按钮
+                if (hub.book.unlocked) {
+                    const btnX = hub.book.x - 60;
+                    const btnY = hub.book.y + hub.book.height / 2 + 30;
+                    if (isPointInRect(clickX, clickY, { x: btnX, y: btnY, width: 120, height: 35 })) {
+                        currentScene = 'game4';
+                        initGame4();
+                        return;
+                    }
+                }
+
+                // 检查书的Unlock按钮
+                if (!hub.book.unlocked) {
+                    const inputX = hub.book.x - 80;
+                    const inputY = hub.book.y + hub.book.height / 2 + 30;
+
+                    // 输入框点击
+                    if (isPointInRect(clickX, clickY, { x: inputX, y: inputY, width: 160, height: 35 })) {
+                        hub.input.active = true;
+                        return;
+                    }
+
+                    // Unlock按钮点击
+                    if (isPointInRect(clickX, clickY, { x: inputX, y: inputY + 45, width: 160, height: 30 })) {
+                        if (hub.input.text === hub.input.targetWord) {
+                            hub.book.unlocked = true;
+                            hub.statusText = '记忆翻牌游戏 已解锁！';
+                        } else {
+                            hub.input.shake = 10;
+                            hub.statusText = '密码错误！试试 MEMORY';
+                        }
+                        return;
+                    }
+                }
+
+                // 检查星球按钮
+                if (hub.planet.unlocked) {
+                    const btnX = hub.planet.centerX - 60;
+                    const btnY = hub.planet.centerY + hub.planet.orbitRadius + 30;
+                    if (isPointInRect(clickX, clickY, { x: btnX, y: btnY, width: 120, height: 35 })) {
+                        currentScene = 'game5';
+                        initGame5();
+                        return;
+                    }
+                }
+            }
+
+            // 游戏1：点击按钮
+            if (currentScene === 'game1' && !game1.gameOver) {
+                for (let i = 0; i < game1.buttons.length; i++) {
+                    const btn = game1.buttons[i];
+                    if (isPointInCircle(clickX, clickY, btn.x, btn.y, btn.radius)) {
+                        if (i === game1.activeButton && btn.active) {
+                            game1.score++;
+                            btn.active = false;
+                            btn.scale = 1.3;
+                            game1.activeButton = -1;
+                            game1.nextSpawnTime = Date.now() + (Math.random() * 500 + 500);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // 游戏4：翻牌
+            if (currentScene === 'game4' && !game4.gameWon && game4.flipped.length < 2) {
+                for (let i = 0; i < game4.cards.length; i++) {
+                    const card = game4.cards[i];
+                    if (card.state === 'hidden' &&
+                        isPointInRect(clickX, clickY, {
+                            x: card.x,
+                            y: card.y,
+                            width: card.width,
+                            height: card.height
+                        })) {
+                        card.state = 'shown';
+                        game4.flipped.push(i);
+                        if (game4.flipped.length === 2) {
+                            game4.moves++;
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        // 键盘事件
+        window.addEventListener('keydown', (e) => {
+            if (currentScene === 'hub' && hub.input.active) {
+                if (e.key === 'Backspace') {
+                    hub.input.text = hub.input.text.slice(0, -1);
+                } else if (e.key === 'Enter') {
+                    if (hub.input.text === hub.input.targetWord) {
+                        hub.book.unlocked = true;
+                        hub.statusText = '记忆翻牌游戏 已解锁！';
+                    } else {
+                        hub.input.shake = 10;
+                        hub.statusText = '密码错误！试试 MEMORY';
+                    }
+                } else if (e.key.length === 1 && hub.input.text.length < 10) {
+                    hub.input.text += e.key.toUpperCase();
+                }
+                e.preventDefault();
+            }
+
+            if (currentScene === 'game3') {
+                game3.keys[e.key] = true;
+                e.preventDefault();
+            }
+
+            if (currentScene === 'game5') {
+                game5.keys[e.key] = true;
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (currentScene === 'game3') {
+                game3.keys[e.key] = false;
+            }
+            if (currentScene === 'game5') {
+                game5.keys[e.key] = false;
+            }
+        });
+
+        // 启动游戏循环
+        gameLoop();
+    </script>
+</body>
+</html>
